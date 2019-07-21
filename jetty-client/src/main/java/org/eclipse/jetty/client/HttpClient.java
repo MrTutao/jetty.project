@@ -1,6 +1,6 @@
 //
 //  ========================================================================
-//  Copyright (c) 1995-2018 Mort Bay Consulting Pty. Ltd.
+//  Copyright (c) 1995-2019 Mort Bay Consulting Pty. Ltd.
 //  ------------------------------------------------------------------------
 //  All rights reserved. This program and the accompanying materials
 //  are made available under the terms of the Eclipse Public License v1.0
@@ -182,12 +182,6 @@ public class HttpClient extends ContainerLifeCycle
     {
         this.transport = transport;
         addBean(transport);
-
-        if (sslContextFactory == null)
-        {
-            sslContextFactory = new SslContextFactory(false);
-            sslContextFactory.setEndpointIdentificationAlgorithm("HTTPS");
-        }
         this.sslContextFactory = sslContextFactory;
         addBean(sslContextFactory);
         addBean(handlers);
@@ -226,9 +220,9 @@ public class HttpClient extends ContainerLifeCycle
 
         if (byteBufferPool == null)
             setByteBufferPool(new MappedByteBufferPool(2048,
-                    executor instanceof ThreadPool.SizedThreadPool
-                            ? ((ThreadPool.SizedThreadPool)executor).getMaxThreads() / 2
-                            : ProcessorUtils.availableProcessors() * 2));
+                executor instanceof ThreadPool.SizedThreadPool
+                    ? ((ThreadPool.SizedThreadPool)executor).getMaxThreads() / 2
+                    : ProcessorUtils.availableProcessors() * 2));
 
         if (scheduler == null)
             setScheduler(new ScheduledExecutorScheduler(name + "-scheduler", false));
@@ -262,7 +256,9 @@ public class HttpClient extends ContainerLifeCycle
         handlers.clear();
 
         for (HttpDestination destination : destinations.values())
+        {
             destination.close();
+        }
         destinations.clear();
 
         requestListeners.clear();
@@ -337,6 +333,8 @@ public class HttpClient extends ContainerLifeCycle
     {
         return decoderFactories;
     }
+
+    // @checkstyle-disable-check : MethodNameCheck
 
     /**
      * Performs a GET request to the specified URI.
@@ -459,11 +457,11 @@ public class HttpClient extends ContainerLifeCycle
     {
         Request newRequest = newHttpRequest(oldRequest.getConversation(), newURI);
         newRequest.method(oldRequest.getMethod())
-                .version(oldRequest.getVersion())
-                .content(oldRequest.getContent())
-                .idleTimeout(oldRequest.getIdleTimeout(), TimeUnit.MILLISECONDS)
-                .timeout(oldRequest.getTimeout(), TimeUnit.MILLISECONDS)
-                .followRedirects(oldRequest.isFollowRedirects());
+            .version(oldRequest.getVersion())
+            .content(oldRequest.getContent())
+            .idleTimeout(oldRequest.getIdleTimeout(), TimeUnit.MILLISECONDS)
+            .timeout(oldRequest.getTimeout(), TimeUnit.MILLISECONDS)
+            .followRedirects(oldRequest.isFollowRedirects());
         for (HttpField field : oldRequest.getHeaders())
         {
             HttpHeader header = field.getHeader();
@@ -481,7 +479,7 @@ public class HttpClient extends ContainerLifeCycle
 
             // Remove authorization headers.
             if (HttpHeader.AUTHORIZATION == header ||
-                    HttpHeader.PROXY_AUTHORIZATION == header)
+                HttpHeader.PROXY_AUTHORIZATION == header)
                 continue;
 
             String name = field.getName();
@@ -534,7 +532,7 @@ public class HttpClient extends ContainerLifeCycle
     protected HttpDestination destinationFor(String scheme, String host, int port)
     {
         if (!HttpScheme.HTTP.is(scheme) && !HttpScheme.HTTPS.is(scheme) &&
-                !HttpScheme.WS.is(scheme) && !HttpScheme.WSS.is(scheme))
+            !HttpScheme.WS.is(scheme) && !HttpScheme.WSS.is(scheme))
             throw new IllegalArgumentException("Invalid protocol " + scheme);
 
         scheme = scheme.toLowerCase(Locale.ENGLISH);
@@ -934,7 +932,7 @@ public class HttpClient extends ContainerLifeCycle
     }
 
     /**
-     * @return the max number of HTTP redirects that are followed
+     * @return the max number of HTTP redirects that are followed in a conversation
      * @see #setMaxRedirects(int)
      */
     public int getMaxRedirects()
@@ -943,7 +941,7 @@ public class HttpClient extends ContainerLifeCycle
     }
 
     /**
-     * @param maxRedirects the max number of HTTP redirects that are followed
+     * @param maxRedirects the max number of HTTP redirects that are followed in a conversation, or -1 for unlimited redirects
      * @see #setFollowRedirects(boolean)
      */
     public void setMaxRedirects(int maxRedirects)
@@ -991,7 +989,7 @@ public class HttpClient extends ContainerLifeCycle
      * may be set to false.
      *
      * @param dispatchIO true to dispatch I/O operations in a different thread,
-     *                   false to execute them in the selector thread
+     * false to execute them in the selector thread
      */
     @Deprecated
     public void setDispatchIO(boolean dispatchIO)
@@ -1012,6 +1010,7 @@ public class HttpClient extends ContainerLifeCycle
     /**
      * Sets the http compliance mode for parsing http responses.
      * This affect how weak the {@link HttpParser} parses http responses and which http protocol level is supported
+     *
      * @param httpCompliance The compliance level which is used to actually parse http responses
      */
     public void setHttpCompliance(HttpCompliance httpCompliance)
@@ -1299,7 +1298,7 @@ public class HttpClient extends ContainerLifeCycle
             else
             {
                 StringBuilder value = new StringBuilder();
-                for (Iterator<ContentDecoder.Factory> iterator = set.iterator(); iterator.hasNext();)
+                for (Iterator<ContentDecoder.Factory> iterator = set.iterator(); iterator.hasNext(); )
                 {
                     ContentDecoder.Factory decoderFactory = iterator.next();
                     value.append(decoderFactory.getEncoding());

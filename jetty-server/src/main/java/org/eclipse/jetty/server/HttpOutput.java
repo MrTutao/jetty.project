@@ -1,6 +1,6 @@
 //
 //  ========================================================================
-//  Copyright (c) 1995-2018 Mort Bay Consulting Pty. Ltd.
+//  Copyright (c) 1995-2019 Mort Bay Consulting Pty. Ltd.
 //  ------------------------------------------------------------------------
 //  All rights reserved. This program and the accompanying materials
 //  are made available under the terms of the Eclipse Public License v1.0
@@ -21,11 +21,16 @@ package org.eclipse.jetty.server;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritePendingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
+import java.util.ResourceBundle;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
 import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.ServletRequest;
@@ -56,6 +61,9 @@ import org.eclipse.jetty.util.log.Logger;
  */
 public class HttpOutput extends ServletOutputStream implements Runnable
 {
+    private static final String LSTRING_FILE = "javax.servlet.LocalStrings";
+    private static ResourceBundle lStrings = ResourceBundle.getBundle(LSTRING_FILE);
+
     /**
      * The HttpOutput.Interceptor is a single intercept point for all
      * output written to the HttpOutput: via writer; via output stream;
@@ -82,10 +90,10 @@ public class HttpOutput extends ServletOutputStream implements Runnable
          * a call with last == true. Empty content buffers may be passed to
          * force a commit or close.
          *
-         * @param content  The content to be written or an empty buffer.
-         * @param last     True if this is the last call to write
+         * @param content The content to be written or an empty buffer.
+         * @param last True if this is the last call to write
          * @param callback The callback to use to indicate {@link Callback#succeeded()}
-         *                 or {@link Callback#failed(Throwable)}.
+         * or {@link Callback#failed(Throwable)}.
          */
         void write(ByteBuffer content, boolean last, Callback callback);
 
@@ -108,7 +116,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
          * <p>If the Interceptor contains buffers then reset them.
          *
          * @throws IllegalStateException Thrown if the response has been
-         *                               committed and buffers and/or headers cannot be reset.
+         * committed and buffers and/or headers cannot be reset.
          */
         default void resetBuffer() throws IllegalStateException
         {
@@ -119,6 +127,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     }
 
     private static Logger LOG = Log.getLogger(HttpOutput.class);
+    private static final ThreadLocal<CharsetEncoder> _encoder = new ThreadLocal<>();
 
     private final HttpChannel _channel;
     private final SharedBlockingCallback _writeBlocker;
@@ -131,6 +140,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     private int _commitSize;
     private WriteListener _writeListener;
     private volatile Throwable _onError;
+
     /*
     ACTION             OPEN       ASYNC      READY      PENDING       UNREADY       CLOSED
     -------------------------------------------------------------------------------------------
@@ -249,7 +259,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     @Override
     public void close()
     {
-        while(true)
+        while (true)
         {
             OutputState state = _state.get();
             switch (state)
@@ -371,7 +381,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     public boolean isClosed()
     {
         return _state.get() == OutputState.CLOSED;
-    } 
+    }
 
     public boolean isAsync()
     {
@@ -409,7 +419,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
 
                 case PENDING:
                     return;
-                    
+
                 case UNREADY:
                     throw new WritePendingException();
 
@@ -551,6 +561,8 @@ public class HttpOutput extends ServletOutputStream implements Runnable
 
     public void write(ByteBuffer buffer) throws IOException
     {
+        // This write always bypasses aggregate buffer
+
         // Async or Blocking ?
         while (true)
         {
@@ -674,10 +686,115 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     @Override
     public void print(String s) throws IOException
     {
+        print(s, false);
+    }
+
+    @Override
+    public void println(String s) throws IOException
+    {
+        print(s, true);
+    }
+
+    private void print(String s, boolean eoln) throws IOException
+    {
         if (isClosed())
             throw new IOException("Closed");
 
-        write(s.getBytes(_channel.getResponse().getCharacterEncoding()));
+        String charset = _channel.getResponse().getCharacterEncoding();
+        CharsetEncoder encoder = _encoder.get();
+        if (encoder == null || !encoder.charset().name().equalsIgnoreCase(charset))
+        {
+            encoder = Charset.forName(charset).newEncoder();
+            encoder.onMalformedInput(CodingErrorAction.REPLACE);
+            encoder.onUnmappableCharacter(CodingErrorAction.REPLACE);
+            _encoder.set(encoder);
+        }
+        else
+        {
+            encoder.reset();
+        }
+
+        CharBuffer in = CharBuffer.wrap(s);
+        CharBuffer crlf = eoln ? CharBuffer.wrap("\r\n") : null;
+        ByteBuffer out = getHttpChannel().getByteBufferPool().acquire((int)(1 + (s.length() + 2) * encoder.averageBytesPerChar()), false);
+        BufferUtil.flipToFill(out);
+
+        for (; ; )
+        {
+            CoderResult result;
+            if (in.hasRemaining())
+            {
+                result = encoder.encode(in, out, crlf == null);
+                if (result.isUnderflow())
+                    if (crlf == null)
+                        break;
+                    else
+                        continue;
+            }
+            else if (crlf != null && crlf.hasRemaining())
+            {
+                result = encoder.encode(crlf, out, true);
+                if (result.isUnderflow())
+                {
+                    if (!encoder.flush(out).isUnderflow())
+                        result.throwException();
+                    break;
+                }
+            }
+            else
+                break;
+
+            if (result.isOverflow())
+            {
+                BufferUtil.flipToFlush(out, 0);
+                ByteBuffer bigger = BufferUtil.ensureCapacity(out, out.capacity() + s.length() + 2);
+                getHttpChannel().getByteBufferPool().release(out);
+                BufferUtil.flipToFill(bigger);
+                out = bigger;
+                continue;
+            }
+
+            result.throwException();
+        }
+        BufferUtil.flipToFlush(out, 0);
+        write(out.array(), out.arrayOffset(), out.remaining());
+        getHttpChannel().getByteBufferPool().release(out);
+    }
+
+    @Override
+    public void println(boolean b) throws IOException
+    {
+        println(lStrings.getString(b ? "value.true" : "value.false"));
+    }
+
+    @Override
+    public void println(char c) throws IOException
+    {
+        println(String.valueOf(c));
+    }
+
+    @Override
+    public void println(int i) throws IOException
+    {
+        println(String.valueOf(i));
+    }
+
+    @Override
+    public void println(long l) throws IOException
+    {
+        println(String.valueOf(l));
+    }
+
+    @Override
+    public void println(float f) throws IOException
+    {
+        println(String.valueOf(f));
+    }
+
+    @Override
+    public void println(double d) throws IOException
+    {
+        println(String.valueOf(d));
     }
 
     /**
@@ -765,7 +882,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     /**
      * Asynchronous send of whole content.
      *
-     * @param content  The whole content to send
+     * @param content The whole content to send
      * @param callback The callback to use to notify success or failure
      */
     public void sendContent(ByteBuffer content, final Callback callback)
@@ -796,7 +913,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
      * Asynchronous send of stream content.
      * The stream will be closed after reading all content.
      *
-     * @param in       The stream content to send
+     * @param in The stream content to send
      * @param callback The callback to use to notify success or failure
      */
     public void sendContent(InputStream in, Callback callback)
@@ -811,7 +928,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
      * Asynchronous send of channel content.
      * The channel will be closed after reading all content.
      *
-     * @param in       The channel content to send
+     * @param in The channel content to send
      * @param callback The callback to use to notify success or failure
      */
     public void sendContent(ReadableByteChannel in, Callback callback)
@@ -826,7 +943,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
      * Asynchronous send of HTTP content.
      *
      * @param httpContent The HTTP content to send
-     * @param callback    The callback to use to notify success or failure
+     * @param callback The callback to use to notify success or failure
      */
     public void sendContent(HttpContent httpContent, Callback callback)
     {
@@ -896,10 +1013,10 @@ public class HttpOutput extends ServletOutputStream implements Runnable
 
             throw new IllegalArgumentException("unknown content for " + httpContent);
         }
-        catch (Throwable th)
+        catch (Throwable cause)
         {
-            abort(th);
-            callback.failed(th);
+            abort(cause);
+            callback.failed(cause);
         }
     }
 
@@ -1087,7 +1204,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
             catch (Throwable e)
             {
                 _onError = e;
-            }            
+            }
         }
     }
 
@@ -1377,7 +1494,9 @@ public class HttpOutput extends ServletOutputStream implements Runnable
             // Read from stream until buffer full or EOF
             BufferUtil.clearToFill(_buffer);
             while (_buffer.hasRemaining() && !_eof)
+            {
                 _eof = (_in.read(_buffer)) < 0;
+            }
 
             // write what we have
             BufferUtil.flipToFlush(_buffer, 0);

@@ -1,6 +1,6 @@
 //
 //  ========================================================================
-//  Copyright (c) 1995-2018 Mort Bay Consulting Pty. Ltd.
+//  Copyright (c) 1995-2019 Mort Bay Consulting Pty. Ltd.
 //  ------------------------------------------------------------------------
 //  All rights reserved. This program and the accompanying materials
 //  are made available under the terms of the Eclipse Public License v1.0
@@ -213,21 +213,21 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements Stream.Listen
         @Override
         protected Action process()
         {
-            DataInfo dataInfo;
+            if (dataInfo != null)
+            {
+                dataInfo.callback.succeeded();
+                if (dataInfo.frame.isEndStream())
+                    return Action.SUCCEEDED;
+            }
+
             synchronized (this)
             {
                 dataInfo = queue.poll();
             }
 
             if (dataInfo == null)
-            {
-                DataInfo prevDataInfo = this.dataInfo;
-                if (prevDataInfo != null && prevDataInfo.frame.isEndStream())
-                    return Action.SUCCEEDED;
                 return Action.IDLE;
-            }
 
-            this.dataInfo = dataInfo;
             ByteBuffer buffer = dataInfo.frame.getData();
             if (buffer.hasRemaining())
                 responseContent(dataInfo.exchange, buffer, this);
@@ -245,13 +245,6 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements Stream.Listen
         }
 
         @Override
-        public void succeeded()
-        {
-            dataInfo.callback.succeeded();
-            super.succeeded();
-        }
-
-        @Override
         protected void onCompleteSuccess()
         {
             responseSuccess(dataInfo.exchange);
@@ -262,6 +255,14 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements Stream.Listen
         {
             dataInfo.callback.failed(failure);
             responseFailure(failure);
+        }
+
+        @Override
+        public boolean reset()
+        {
+            queue.clear();
+            dataInfo = null;
+            return super.reset();
         }
     }
 

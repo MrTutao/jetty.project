@@ -1,6 +1,6 @@
 //
 //  ========================================================================
-//  Copyright (c) 1995-2018 Mort Bay Consulting Pty. Ltd.
+//  Copyright (c) 1995-2019 Mort Bay Consulting Pty. Ltd.
 //  ------------------------------------------------------------------------
 //  All rights reserved. This program and the accompanying materials
 //  are made available under the terms of the Eclipse Public License v1.0
@@ -25,7 +25,6 @@ import java.security.PrivilegedAction;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
-
 import javax.security.auth.Subject;
 import javax.security.auth.login.AppConfigurationEntry;
 import javax.security.auth.login.Configuration;
@@ -321,7 +320,7 @@ public class ConfigurableSpnegoLoginService extends ContainerLifeCycle implement
     {
         public static final String ATTRIBUTE = GSSContextHolder.class.getName();
 
-        private transient final GSSContext gssContext;
+        private final transient GSSContext gssContext;
 
         private GSSContextHolder(GSSContext gssContext)
         {
